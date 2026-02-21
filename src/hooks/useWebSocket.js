@@ -17,9 +17,9 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 
-// ── Configuration ─────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 
-const WS_URL = 'ws://localhost:3001';
+const BACKEND_WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
 const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
 
@@ -60,8 +60,9 @@ export function useWebSocket(onMessage) {
 
         setConnectionState((prev) => (prev === 'connected' ? 'reconnecting' : 'connecting'));
 
-        const ws = new WebSocket(WS_URL);
-        wsRef.current = ws;
+        // Create the WebSocket connection
+        wsRef.current = new WebSocket(BACKEND_WS_URL);
+        const ws = wsRef.current;
 
         ws.onopen = () => {
             if (unmountedRef.current) { ws.close(); return; }
