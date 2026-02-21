@@ -1,23 +1,13 @@
 /**
  * ConnectionStatus.jsx
  * ─────────────────────────────────────────────────────────────────────────────
- * Displays the real-time connection status for each venue (Polymarket, Kalshi)
- * and warns the user if a venue has been stale for more than STALE_THRESHOLD_MS.
- *
- * States:
- *   connected    — live WebSocket feed is active
- *   mock         — no API key; using simulated data
- *   reconnecting — connection dropped; trying to reconnect
- *   disconnected — connection lost with no active retry
- *
- * The dot next to each badge pulses when the feed is live/mock (to show
- * that the data is actively updating).
+ * Displays real-time connection status for each venue with enhanced visual
+ * indicators. Shows staleness warnings when data hasn't updated recently.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { useMemo } from 'react';
 
-// How long without an update before we show a "stale data" warning.
 const STALE_THRESHOLD_MS = 10_000;
 
 const LABEL_MAP = {
@@ -27,17 +17,18 @@ const LABEL_MAP = {
 
 const STATUS_LABEL = {
     connected: 'Live',
-    mock: 'Mock Data',
+    mock: 'Mock',
     reconnecting: 'Reconnecting…',
     disconnected: 'Disconnected',
 };
 
-/**
- * Returns a human-readable "X seconds ago" string.
- *
- * @param {number|null} timestamp
- * @returns {string}
- */
+const STATUS_ICON = {
+    connected: '🟢',
+    mock: '🟡',
+    reconnecting: '🔄',
+    disconnected: '🔴',
+};
+
 function timeAgo(timestamp) {
     if (!timestamp) return 'never';
     const diff = Math.floor((Date.now() - timestamp) / 1000);
@@ -46,17 +37,9 @@ function timeAgo(timestamp) {
     return `${Math.floor(diff / 60)}m ago`;
 }
 
-/**
- * @param {{
- *   connectionStatus: { polymarket: string, kalshi: string },
- *   lastUpdated: { polymarket: number|null, kalshi: number|null },
- *   wsConnectionState: string
- * }} props
- */
 export default function ConnectionStatus({ connectionStatus, lastUpdated, wsConnectionState }) {
     const venues = ['polymarket', 'kalshi'];
 
-    // Check staleness once per render (time-based, not expensive).
     const stale = useMemo(() => {
         const now = Date.now();
         return {
@@ -67,7 +50,7 @@ export default function ConnectionStatus({ connectionStatus, lastUpdated, wsConn
 
     return (
         <div className="status-bar">
-            {/* Backend WebSocket connection indicator */}
+            {/* Backend connection */}
             <div className={`status-badge ${wsConnectionState === 'connected' ? 'connected' : 'reconnecting'}`}>
                 <span className={`status-dot ${wsConnectionState === 'connected' ? 'pulse' : ''}`} />
                 Backend {wsConnectionState === 'connected' ? 'Connected' : 'Connecting…'}
@@ -81,12 +64,12 @@ export default function ConnectionStatus({ connectionStatus, lastUpdated, wsConn
                 return (
                     <div key={venue} className={`status-badge ${status}`}>
                         <span className={`status-dot ${isActive ? 'pulse' : ''}`} />
-                        <span>{LABEL_MAP[venue]}: {STATUS_LABEL[status] ?? status}</span>
+                        <span style={{ fontWeight: 700 }}>{LABEL_MAP[venue]}</span>
+                        <span style={{ opacity: 0.8 }}>{STATUS_LABEL[status] ?? status}</span>
 
-                        {/* Last-updated timestamp shown as a subtle suffix */}
                         {lastUpdated?.[venue] && (
-                            <span className="status-stale">
-                                {stale[venue] ? '⚠ Stale · ' : ''}
+                            <span className="status-stale" style={{ marginLeft: 2 }}>
+                                {stale[venue] ? '⚠ Stale · ' : '· '}
                                 {timeAgo(lastUpdated[venue])}
                             </span>
                         )}

@@ -2,23 +2,15 @@
  * OrderBook.jsx
  * ─────────────────────────────────────────────────────────────────────────────
  * Renders the combined order book table (asks on top, bids on bottom),
- * colour-coded by venue with a depth-visualisation bar behind each row.
+ * colour-coded by venue with depth-visualisation bars and cumulative size.
  *
- * Key design decisions:
- *  - Asks are shown descending from the top (closest ask at the bottom of
- *    the asks section, adjacent to the spread row) — matching industry-standard
- *    order book layout.
- *  - Bids are shown descending from just below the spread (best bid first).
- *  - Each row has an absolute-positioned depth bar whose width is proportional
- *    to the level's size relative to the maximum size in that side.
- *  - Rows flash briefly (CSS animation) when their price or size changes,
- *    giving instant visual feedback without being distracting.
- *  - The `venue` field on each level drives colour coding:
- *      polymarket → blue, kalshi → emerald, both → purple
- *
- * Props:
- *  @param {object}  book         - Full merged order book from the aggregator.
- *  @param {number}  maxLevels    - How many levels to show per side (default 10).
+ * Features:
+ *  - Industry-standard layout (best ask nearest spread, best bid below)
+ *  - Depth bars proportional to level size
+ *  - Cumulative depth column
+ *  - Flash animation on updates
+ *  - Shimmer loading skeleton when waiting for data
+ *  - Venue colour coding: polymarket=blue, kalshi=emerald, both=purple
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -28,67 +20,40 @@ const DEFAULT_MAX_LEVELS = 10;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/**
- * Formats a price (0–1) as a percentage string (e.g. 0.55 → "55.0¢")
- *
- * @param {number} price
- * @returns {string}
- */
 const fmtPrice = (price) => `${(price * 100).toFixed(1)}¢`;
-
-/**
- * Formats a share size with comma separators.
- *
- * @param {number} size
- * @returns {string}
- */
 const fmtSize = (size) => size.toLocaleString();
-
-/**
- * Computes a stable key string for a level (used as React key + change detection).
- *
- * @param {{price: number, size: number}} level
- * @returns {string}
- */
 const levelKey = (level) => `${level.price.toFixed(4)}-${level.size}`;
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+// ── Row Component ─────────────────────────────────────────────────────────────
 
-/**
- * A single order book row.
- * Handles its own flash animation when the level changes.
- */
-function OrderBookRow({ level, side, maxSize }) {
+function OrderBookRow({ level, side, maxSize, cumulativeSize, maxCumulative }) {
     const prevKeyRef = useRef(null);
     const [isFlashing, setIsFlashing] = useState(false);
 
     const currentKey = levelKey(level);
 
     useEffect(() => {
-        // Flash only when the level has actually changed (not on first render).
         if (prevKeyRef.current !== null && prevKeyRef.current !== currentKey) {
             setIsFlashing(true);
-            const t = setTimeout(() => setIsFlashing(false), 600);
+            const t = setTimeout(() => setIsFlashing(false), 700);
             return () => clearTimeout(t);
         }
         prevKeyRef.current = currentKey;
     }, [currentKey]);
 
-    // Depth bar width as a percentage of the largest level on this side.
     const depthPct = maxSize > 0 ? Math.min(100, (level.size / maxSize) * 100) : 0;
+    const cumPct = maxCumulative > 0 ? Math.min(100, (cumulativeSize / maxCumulative) * 100) : 0;
 
     return (
         <tr className={`ob-row ${side} ${isFlashing ? 'flash-update' : ''}`}>
-            {/* Depth bar is a pseudo-element because CSS alone can't do percentage
-          width in a table cell — we use an absolutely-positioned div instead. */}
             <td style={{ position: 'relative' }}>
-                <div
-                    className="ob-depth-bar"
-                    style={{ width: `${depthPct}%` }}
-                />
+                <div className="ob-depth-bar" style={{ width: `${depthPct}%` }} />
                 <span className={`price-${side}`}>{fmtPrice(level.price)}</span>
             </td>
             <td>{fmtSize(level.size)}</td>
+            <td className="cumulative-size" style={{ opacity: 0.4 + (cumPct / 100) * 0.6 }}>
+                {fmtSize(cumulativeSize)}
+            </td>
             <td>{fmtSize(level.polymarketSize || 0)}</td>
             <td>{fmtSize(level.kalshiSize || 0)}</td>
             <td>
@@ -100,46 +65,113 @@ function OrderBookRow({ level, side, maxSize }) {
     );
 }
 
+// ── Shimmer Skeleton ──────────────────────────────────────────────────────────
+
+function OrderBookSkeleton() {
+    return (
+        <div className="card">
+            <div className="card-header">
+                <span className="card-title">Combined Order Book</span>
+            </div>
+            <div className="shimmer-container">
+                {Array.from({ length: 10 }).map((_, i) => (
+                    <div key={i} className="shimmer-row" style={{ width: `${60 + Math.random() * 40}%` }} />
+                ))}
+            </div>
+            <p style={{ color: 'var(--text-muted)', fontSize: 12, textAlign: 'center', marginTop: 8 }}>
+                Waiting for market data…
+            </p>
+        </div>
+    );
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
-/**
- * @param {{
- *   book: { bids, asks, spread, midPrice },
- *   maxLevels: number
- * }} props
- */
 export default function OrderBook({ book, maxLevels = DEFAULT_MAX_LEVELS }) {
     if (!book) {
-        return (
-            <div className="card">
-                <div className="card-header"><span className="card-title">Combined Order Book</span></div>
-                <p style={{ color: 'var(--text-muted)', padding: '16px 0', textAlign: 'center' }}>
-                    Waiting for data…
-                </p>
-            </div>
-        );
+        return <OrderBookSkeleton />;
     }
 
-    // Asks display: ascending price, but we want to show them reversed
-    // (highest ask at top, best ask just above the spread row).
+    // Asks: ascending price, reversed so highest is at top, best ask near spread
     const asks = (book.asks || []).slice(0, maxLevels).slice().reverse();
     const bids = (book.bids || []).slice(0, maxLevels);
 
-    // Max sizes for depth bar scaling (computed per side independently).
+    // Max sizes for depth bar scaling
     const maxAskSize = Math.max(...(book.asks || []).slice(0, maxLevels).map((l) => l.size), 1);
     const maxBidSize = Math.max(...bids.map((l) => l.size), 1);
+
+    // Cumulative sizes (from best to worst for each side)
+    const asksCumulative = [];
+    let cumAsk = 0;
+    // asks are reversed, so cumulative goes from near-spread outward
+    for (let i = asks.length - 1; i >= 0; i--) {
+        cumAsk += asks[i].size;
+        asksCumulative[i] = cumAsk;
+    }
+
+    const bidsCumulative = [];
+    let cumBid = 0;
+    for (let i = 0; i < bids.length; i++) {
+        cumBid += bids[i].size;
+        bidsCumulative[i] = cumBid;
+    }
+
+    const maxAskCumulative = cumAsk;
+    const maxBidCumulative = cumBid;
+
+    // Total depth summary
+    const totalBidDepth = bids.reduce((acc, l) => acc + l.size, 0);
+    const totalAskDepth = asks.reduce((acc, l) => acc + l.size, 0);
+    const totalDepth = totalBidDepth + totalAskDepth;
+    const bidPct = totalDepth > 0 ? ((totalBidDepth / totalDepth) * 100).toFixed(0) : 50;
 
     return (
         <div className="card">
             <div className="card-header">
                 <span className="card-title">Combined Order Book</span>
-                <div style={{ display: 'flex', gap: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--text-secondary)', alignItems: 'center' }}>
                     {book.midPrice != null && (
-                        <span>Mid: <span className="mono" style={{ color: 'var(--text-primary)' }}>{fmtPrice(book.midPrice)}</span></span>
+                        <span>Mid: <span className="mono" style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{fmtPrice(book.midPrice)}</span></span>
                     )}
                     {book.spread != null && (
-                        <span>Spread: <span className="mono" style={{ color: 'var(--text-primary)' }}>{(book.spread * 100).toFixed(1)}¢</span></span>
+                        <span>Spread: <span className="mono" style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{(book.spread * 100).toFixed(1)}¢</span></span>
                     )}
+                </div>
+            </div>
+
+            {/* Depth imbalance bar */}
+            <div style={{ marginBottom: 16 }}>
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 11,
+                    color: 'var(--text-muted)',
+                    marginBottom: 4,
+                    fontWeight: 600,
+                    letterSpacing: '0.04em'
+                }}>
+                    <span style={{ color: 'var(--bid-color)' }}>Bids {bidPct}%</span>
+                    <span style={{ color: 'var(--ask-color)' }}>Asks {100 - bidPct}%</span>
+                </div>
+                <div style={{
+                    height: 4,
+                    borderRadius: 2,
+                    display: 'flex',
+                    overflow: 'hidden',
+                    background: 'var(--bg-surface)',
+                }}>
+                    <div style={{
+                        width: `${bidPct}%`,
+                        background: 'var(--bid-color)',
+                        transition: 'width 500ms cubic-bezier(0.4,0,0.2,1)',
+                        opacity: 0.6,
+                    }} />
+                    <div style={{
+                        flex: 1,
+                        background: 'var(--ask-color)',
+                        transition: 'width 500ms cubic-bezier(0.4,0,0.2,1)',
+                        opacity: 0.6,
+                    }} />
                 </div>
             </div>
 
@@ -148,26 +180,29 @@ export default function OrderBook({ book, maxLevels = DEFAULT_MAX_LEVELS }) {
                     <thead>
                         <tr>
                             <th style={{ textAlign: 'left' }}>Price</th>
-                            <th>Total Size</th>
-                            <th style={{ color: 'var(--poly-primary)' }}>PM Size</th>
-                            <th style={{ color: 'var(--kalshi-primary)' }}>KS Size</th>
-                            <th>Venue</th>
+                            <th>Size</th>
+                            <th>Cumulative</th>
+                            <th style={{ color: 'var(--poly-primary)' }}>PM</th>
+                            <th style={{ color: 'var(--kalshi-primary)' }}>KS</th>
+                            <th>Source</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {/* ── Asks (sellers) — shown in reverse so best ask is nearest spread ── */}
-                        {asks.map((level) => (
+                        {/* ── Asks ── */}
+                        {asks.map((level, i) => (
                             <OrderBookRow
                                 key={level.price.toFixed(4)}
                                 level={level}
                                 side="ask"
                                 maxSize={maxAskSize}
+                                cumulativeSize={asksCumulative[i]}
+                                maxCumulative={maxAskCumulative}
                             />
                         ))}
 
                         {/* ── Spread divider ── */}
                         <tr className="ob-spread-row">
-                            <td colSpan={5}>
+                            <td colSpan={6}>
                                 Spread
                                 <span className="spread-value">
                                     {book.spread != null ? `${(book.spread * 100).toFixed(2)}¢` : '—'}
@@ -180,13 +215,15 @@ export default function OrderBook({ book, maxLevels = DEFAULT_MAX_LEVELS }) {
                             </td>
                         </tr>
 
-                        {/* ── Bids (buyers) — best bid first ── */}
-                        {bids.map((level) => (
+                        {/* ── Bids ── */}
+                        {bids.map((level, i) => (
                             <OrderBookRow
                                 key={level.price.toFixed(4)}
                                 level={level}
                                 side="bid"
                                 maxSize={maxBidSize}
+                                cumulativeSize={bidsCumulative[i]}
+                                maxCumulative={maxBidCumulative}
                             />
                         ))}
                     </tbody>
